@@ -1,18 +1,20 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Http.Controllers;
+using System.Web.Http.Filters;
 using GoogleAnalyticsTracker.Core;
 
 namespace GoogleAnalyticsTracker.WebApi2 {
     public class ActionTrackingAttribute
             : AsyncActionFilterAttribute
     {
-        private Func<HttpActionContext, bool> _isTrackableAction;
+        private Func<HttpActionExecutedContext, bool> _isTrackableAction;
 
         public Tracker Tracker { get; set; }
 
-        public Func<HttpActionContext, bool> IsTrackableAction
+        public Func<HttpActionExecutedContext, bool> IsTrackableAction
         {
             get
             {
@@ -67,52 +69,77 @@ namespace GoogleAnalyticsTracker.WebApi2 {
         {
         }
 
-        public ActionTrackingAttribute(Tracker tracker, Func<HttpActionContext, bool> isTrackableAction)
+        public ActionTrackingAttribute(Tracker tracker, Func<HttpActionExecutedContext, bool> isTrackableAction)
         {
             Tracker = tracker;
             IsTrackableAction = isTrackableAction;
         }
 
-        public ActionTrackingAttribute(string trackingAccount, string trackingDomain, Func<HttpActionContext, bool> isTrackableAction)
+        public ActionTrackingAttribute(string trackingAccount, string trackingDomain, Func<HttpActionExecutedContext, bool> isTrackableAction)
         {
             Tracker = new Tracker(trackingAccount, trackingDomain, new CookieBasedAnalyticsSession(), new AspNetWebApiTrackerEnvironment());
             IsTrackableAction = isTrackableAction;
         }
 
-        public async override Task OnActionExecutingAsync(HttpActionContext actionContext, CancellationToken cancellationToken)
+        public async override Task OnActionExecutedAsync(HttpActionExecutedContext actionExecutedContext, CancellationToken cancellationToken)
         {
-            if (IsTrackableAction(actionContext))
+            if (IsTrackableAction(actionExecutedContext))
             {
                 var requireRequestAndResponse = Tracker.AnalyticsSession as IRequireRequestAndResponse;
                 if (requireRequestAndResponse != null)
                 {
-                    requireRequestAndResponse.SetRequestAndResponse(actionContext.Request, actionContext.Response);
+                    requireRequestAndResponse.SetRequestAndResponse(actionExecutedContext.Request, actionExecutedContext.Response);
                 }
 
-                await OnTrackingAction(actionContext);
+                await OnTrackingAction(actionExecutedContext);
             }
         }
 
-        public virtual string BuildCurrentActionName(HttpActionContext filterContext)
+        public virtual string BuildCurrentActionName(HttpActionExecutedContext filterContext)
         {
             return ActionDescription ??
-                         filterContext.ActionDescriptor.ControllerDescriptor.ControllerName + " - " +
-                         filterContext.ActionDescriptor.ActionName;
+                         filterContext.ActionContext.ControllerContext.ControllerDescriptor.ControllerName + " - " +
+                         filterContext.ActionContext.ActionDescriptor.ActionName;
         }
 
-        public virtual string BuildCurrentActionUrl(HttpActionContext filterContext)
+        public virtual string BuildCurrentActionUrl(HttpActionExecutedContext filterContext)
         {
             var request = filterContext.Request;
 
             return ActionUrl ?? (request.RequestUri != null ? request.RequestUri.PathAndQuery : "");
         }
 
-        public virtual async Task<TrackingResult> OnTrackingAction(HttpActionContext filterContext)
+        public virtual async Task<TrackingResult> OnTrackingAction(HttpActionExecutedContext filterContext)
         {
+            SetRequestPropertiesCustomVariables(filterContext);
+
             return await Tracker.TrackPageViewAsync(
                 filterContext.Request,
                 BuildCurrentActionName(filterContext),
                 BuildCurrentActionUrl(filterContext));
+        }
+
+        private void SetRequestPropertiesCustomVariables(HttpActionExecutedContext filterContext)
+        {
+            // read any "custom variables" that have been set on the request
+            object customVariablesObj;
+            filterContext.Request.Properties.TryGetValue("AnalyticsCustomVariables", out customVariablesObj);
+            var customVariablesDictionary = customVariablesObj as Dictionary<string, string> ?? new Dictionary<string, string>();
+
+            int position = 1;
+
+            Tracker.ClearCustomVariables();
+
+            foreach (var key in customVariablesDictionary.Keys)
+            {
+                Tracker.SetCustomVariable(position++, key, customVariablesDictionary[key]);
+
+                // only 5 custom variables allowed in Google Analytics
+                if (position > 5)
+                {
+                    break;
+                }
+            }
         }
     }
 }

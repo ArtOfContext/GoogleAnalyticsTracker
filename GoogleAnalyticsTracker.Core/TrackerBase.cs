@@ -84,6 +84,11 @@ namespace GoogleAnalyticsTracker.Core
             CustomVariables[position - 1] = new CustomVariable(name, value, scope);
         }
 
+        public void ClearCustomVariables()
+        {
+            CustomVariables = new CustomVariable[5];
+        }
+
         private async Task<TrackingResult> RequestUrlAsync(string url, Dictionary<string, string> parameters, string userAgent = null)
         {
             // Create GET string
@@ -112,6 +117,8 @@ namespace GoogleAnalyticsTracker.Core
             try
             {
                 request = (HttpWebRequest)WebRequest.Create(string.Format("{0}?{1}", url, data));
+                // To debug with Fiddler, uncomment following line
+                // request.Proxy = new WebProxy(new Uri("http://localhost:8888"));
                 request.CookieContainer = CookieContainer;
                 request.SetHeader("Referer", referer);
                 request.SetHeader("User-Agent", userAgent ?? UserAgent);
